@@ -75,10 +75,11 @@ def test_readme_contains_complete_compose_configuration():
     assert "ASF_IPC_PASSWORD: ${ASF_IPC_PASSWORD" in readme
     assert "ASF_IPC_CONNECT_TIMEOUT: ${ASF_IPC_CONNECT_TIMEOUT:-3.05}" in readme
     assert "ASF_IPC_READ_TIMEOUT: ${ASF_IPC_READ_TIMEOUT:-15}" in readme
+    assert '${ASF_IPC_BIND_ADDRESS:-127.0.0.1}:1242:1242' in readme
     assert "restart: unless-stopped" in readme
     assert "depends_on:" in readme
     assert "justarchi/archisteamfarm:6.3.9.6" in readme
-    assert "1242:1242" not in readme
+    assert "ASF_IPC_BIND_ADDRESS" in readme
 
 
 def test_readme_documents_current_operation_and_migration():
@@ -94,6 +95,7 @@ def test_readme_documents_current_operation_and_migration():
         "ASF_IPC_PASSWORD",
         "ASF_IPC_CONNECT_TIMEOUT",
         "ASF_IPC_READ_TIMEOUT",
+        "ASF_IPC_BIND_ADDRESS",
     ):
         assert setting in readme
     assert "3.05" in readme

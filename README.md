@@ -107,6 +107,8 @@ services:
       ASF_ARGS: --server
     volumes:
       - ./config:/app/config
+    ports:
+      - "${ASF_IPC_BIND_ADDRESS:-127.0.0.1}:1242:1242"
     networks:
       - asf-private
 
@@ -141,8 +143,14 @@ TELEGRAM_ALLOWED_USER_ID=123456789
 ASF_IPC_PASSWORD=replace-me
 ASF_IPC_CONNECT_TIMEOUT=3.05
 ASF_IPC_READ_TIMEOUT=15
+ASF_IPC_BIND_ADDRESS=127.0.0.1
 # TELEGRAM_PROXY=http://host:7890
 ```
+
+`ASF_IPC_BIND_ADDRESS` defaults to `127.0.0.1`, which makes IPC reachable only
+from the Docker host. Set it to a trusted LAN address when another device must
+connect. Using `0.0.0.0` listens on every interface; only do this with a strong
+`ASF_IPC_PASSWORD` and firewall rules that prevent internet access.
 
 Pull and start the service from the same directory:
 
@@ -154,8 +162,8 @@ docker compose logs --tail=100 asfbot
 ```
 
 Both services join the `asf-private` bridge. ASF listens on `1242` inside that
-network, but the configuration has no `ports` mapping, so IPC is not published
-on the host. The bridge still permits ASFBot's outbound Telegram connection.
+network and publishes it only on the configured host address. The bridge also
+permits ASFBot's outbound Telegram connection.
 
 The example deliberately pins ASF to `justarchi/archisteamfarm:6.3.9.6` rather
 than a moving `latest` tag. To upgrade ASF, review its official release notes,
@@ -184,8 +192,9 @@ bind Kestrel inside the container:
 }
 ```
 
-Binding `0.0.0.0` makes IPC reachable by ASFBot on the Docker bridge; omitting
-a host port mapping keeps it private from the LAN and internet.
+Binding Kestrel to `0.0.0.0` inside the container makes IPC reachable by ASFBot
+on the Docker bridge. The Compose host binding independently controls which
+host interfaces can accept external IPC connections.
 
 ## Supported architectures
 
