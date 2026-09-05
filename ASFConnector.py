@@ -1,121 +1,119 @@
 import logger
-import requests
-import json
 from IPCProtocol import IPCProtocolHandler
-
-LOG = None
-
+from urllib.parse import quote
 
 class ASFConnector:
 
-    def __init__(self, host='127.0.0.1', port='1242', path='/Api', password=None):
-        global LOG
-        LOG = logger.get_logger(__name__)
+    def __init__(self, host='127.0.0.1', port='1242', path='/Api', password=None,
+                 connect_timeout=IPCProtocolHandler.DEFAULT_CONNECT_TIMEOUT,
+                 read_timeout=IPCProtocolHandler.DEFAULT_READ_TIMEOUT):
+        self.log = logger.get_logger(__name__)
 
         self.host = host
         self.port = port
         self.path = path
 
-        LOG.debug(__name__ + " initialized. Host: '%s'. Port: '%s'", host, port)
-        self.connection_handler = IPCProtocolHandler(host, port, path, password)
+        self.log.debug("ASF connector initialized")
+        self.connection_handler = IPCProtocolHandler(
+            host,
+            port,
+            path,
+            password,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+        )
 
     def get_asf_info(self):
         """" Fetches common info related to ASF as a whole. """
-        data = self.connection_handler.get('/ASF')
-        LOG.debug(data)
-        return data
+        return self.connection_handler.get('/ASF')
 
     def get_bot_info(self, bot):
         """ Fetches common info related to given bots. """
-        LOG.debug('get_bot_info: bot {}'.format(bot))
-        resource = '/Bot/' + bot
+        bot_selector = _encoded_bot_selector(bot)
+        resource = '/Bot/' + bot_selector
         response = self.connection_handler.get(resource)
-        if 'Result' in response:
+        if not isinstance(response, dict):
+            return 'Getting bot info failed: Invalid ASF response.'
+        results = response.get('Result')
+        if isinstance(results, dict) and results:
             message = ""
-            for bot_name in response['Result']:
+            for bot_name, bot_data in results.items():
                 message += 'Bot {}: '.format(bot_name)
-                bot = response['Result'][bot_name]
-                if bot['IsConnectedAndLoggedOn']:
-                    cards_farmer = bot['CardsFarmer']
+                if not isinstance(bot_data, dict):
+                    message += 'Invalid ASF response.\n'
+                    continue
+                if bot_data.get('IsConnectedAndLoggedOn', False):
+                    cards_farmer = bot_data.get('CardsFarmer')
+                    if not isinstance(cards_farmer, dict):
+                        cards_farmer = {}
                     farm_message = ""
-                    if cards_farmer['Paused']:
+                    if cards_farmer.get('Paused', False):
                         farm_message += 'Farming paused.'
-                    elif cards_farmer['CurrentGamesFarming']:
+                    current_games = cards_farmer.get('CurrentGamesFarming', [])
+                    if not isinstance(current_games, list):
+                        current_games = []
+                    if not farm_message and current_games:
                         farm_message += 'Currently farming games:'
-                    for current_games in cards_farmer['CurrentGamesFarming']:
-                        appid = current_games['AppID']
-                        appname = current_games['GameName']
-                        cards_remaining = current_games['CardsRemaining']
+                    for current_game in current_games:
+                        if not isinstance(current_game, dict):
+                            continue
+                        appid = current_game.get('AppID', 'unknown')
+                        appname = current_game.get('GameName', 'Unknown')
+                        cards_remaining = current_game.get('CardsRemaining', 'unknown')
                         farm_message += '\n\t[{}/{}] {} cards remaining.'.format(appid, appname, cards_remaining)
-                    if len(cards_farmer['GamesToFarm']) > 0:
-                        farm_message += ' {} game(s) to farm ('.format(len(cards_farmer['GamesToFarm']))
-                        for games_to_farm in cards_farmer['GamesToFarm']:
-                            appid = games_to_farm['AppID']
-                            appname = games_to_farm['GameName']
-                            farm_message += '[{}/{}] '.format(appid, appname)
-                        farm_message = farm_message[:-1] + "). "
-                    time_remaining = cards_farmer['TimeRemaining']
-                    if time_remaining != '00:00:00':
+                    games_to_farm = cards_farmer.get('GamesToFarm', [])
+                    if not isinstance(games_to_farm, list):
+                        games_to_farm = []
+                    if games_to_farm:
+                        games = []
+                        for game in games_to_farm:
+                            if isinstance(game, dict):
+                                games.append('[{}/{}]'.format(
+                                    game.get('AppID', 'unknown'),
+                                    game.get('GameName', 'Unknown'),
+                                ))
+                        if games:
+                            farm_message += ' {} game(s) to farm ({}). '.format(len(games), ' '.join(games))
+                    time_remaining = cards_farmer.get('TimeRemaining', '00:00:00')
+                    if time_remaining and time_remaining != '00:00:00':
                         farm_message += 'Time remaining: {}'.format(time_remaining)
                     if len(farm_message) == 0:
                         farm_message += 'Idle.'
                     message += farm_message + '\n'
                 else:
-                    if len(bot['BotConfig']) == 0:
+                    if 'BotConfig' in bot_data and not bot_data['BotConfig']:
                         message += 'Not configured.\n'
                     else:
                         message += 'Offline.\n'
-        elif response['Success']:
+        elif response.get('Success', False):
             message = 'Bot {} not found.'.format(bot)
         else:
-            message = 'Getting bot info failed: {}'.format(response['Message'])
+            message = 'Getting bot info failed: {}'.format(response.get('Message', 'Unknown error'))
         return message
 
     def bot_redeem(self, bot, keys):
         """ Redeems cd-keys on given bot. """
-        LOG.debug('bot_redeem: bot {}, keys {}'.format(bot, keys))
-        assert type(keys) is set or type(keys) is str
-        resource = '/Bot/' + bot + '/Redeem'
-        if type(keys) is str:
-            payload_keys = [keys]
-        else:
-            payload_keys = []
-            for key in keys:
-                payload_keys.append(key)
+        bot_selector = _encoded_bot_selector(bot)
+        payload_keys = _validated_keys(keys)
+        resource = '/Bot/' + bot_selector + '/Redeem'
         data = {'KeysToRedeem': payload_keys}
         response = self.connection_handler.post(resource, payload=data)
-        if 'Result' in response:
-            results = response['Result']
-            message = ""
-            for bot_name in results:
-                bot = results[bot_name]
-                for key in bot:
-                    if bot[key]:
-                        message += "Bot {}: \n".format(bot_name)
-                        if 'purchase_receipt_info' in bot[key] and bot[key]['purchase_receipt_info']:
-                            purchase_receipt_info = bot[key]['purchase_receipt_info']
-                            items = ''
-                            # Parse items in the key
-                            for item in purchase_receipt_info['line_items']:
-                                items += '[{}, {}] '.format(item['packageid'], item['line_item_description'])
-                            # Build message with the receipt info and the items
-                            message += "\t[{}] {}: {}/{}\n".format(
-                                key, items, purchase_receipt_info['purchase_status']
-                                if type(purchase_receipt_info['purchase_status']) is str
-                                else Result[purchase_receipt_info['purchase_status']],
-                                purchase_receipt_info['result_detail'] if type(purchase_receipt_info['result_detail']) is str
-                                else PurchaseResultDetail[purchase_receipt_info['result_detail']])
-                        else:
-                            message += "\t[{}] {}/{}\n".format(
-                                key, bot[key]['Result'] if type(bot[key]['Result']) is str
-                                else Result[bot[key]['Result']],
-                                bot[key]['PurchaseResultDetail'] if type(bot[key]['PurchaseResultDetail']) is str
-                                else PurchaseResultDetail[bot[key]['PurchaseResultDetail']])
-
-        elif response['Success']:
+        if not isinstance(response, dict):
+            return 'Redeem failed: Invalid ASF response.'
+        results = response.get('Result')
+        if isinstance(results, dict) and results:
+            messages = []
+            for bot_name, bot_results in results.items():
+                if not isinstance(bot_results, dict) or not bot_results:
+                    messages.append('Bot {}: Invalid ASF response.'.format(bot_name))
+                    continue
+                for key, details in bot_results.items():
+                    messages.append(_format_redeem_result(bot_name, key, details))
+            message = '\n'.join(messages)
+        elif response.get('Success', False):
             message = 'Bot {} not found.'.format(bot)
         else:
-            message = 'Redeem failed: {}'.format(response['Message'])
+            message = 'Redeem failed: {}'.format(response.get('Message', 'Unknown error'))
         return message
 
     def send_command(self, command):
@@ -123,17 +121,84 @@ class ASFConnector:
         This API endpoint is supposed to be entirely replaced by ASF actions available under /Api/ASF/{action} and /Api/Bot/{bot}/{action}.
         You should use “given bot” commands when executing this endpoint, omitting targets of the command will cause the command to be executed on first defined bot
         """
-        LOG.debug("Send command: {}".format(command))
+        if not isinstance(command, str):
+            raise TypeError('"command" must be a string')
+        if not command.strip():
+            raise ValueError('"command" must not be empty')
         resource = '/Command/'
         data = {"Command": command}
         response = self.connection_handler.post(resource, payload=data)
+        if not isinstance(response, dict):
+            return 'Command unsuccessful: Invalid ASF response.'
         message = ""
-        if response['Success']:
-            message += response['Result']
+        if response.get('Success', False):
+            message += str(response.get('Result', ''))
         else:
-            message += 'Command unsuccessful: {}'.format(response['Message'])
+            message += 'Command unsuccessful: {}'.format(response.get('Message', 'Unknown error'))
 
         return message
+
+
+def _encoded_bot_selector(bot):
+    if not isinstance(bot, str):
+        raise TypeError('"bot" must be a string')
+    names = bot.split(',')
+    if not names or any(not name.strip() for name in names):
+        raise ValueError('"bot" must contain non-empty names')
+    for name in names:
+        if any(char in name for char in '/\\?#') or any(ord(char) < 32 for char in name):
+            raise ValueError('"bot" contains unsafe characters')
+    return ','.join(quote(name, safe='-._~*') for name in names)
+
+
+def _validated_keys(keys):
+    if isinstance(keys, str):
+        key_values = [keys]
+    elif isinstance(keys, set):
+        key_values = list(keys)
+    else:
+        raise TypeError('"keys" must be a string or set')
+    if not key_values or any(not isinstance(key, str) for key in key_values):
+        raise ValueError('"keys" must contain non-empty strings')
+    if any(not key.strip() or any(ord(char) < 32 for char in key) for key in key_values):
+        raise ValueError('"keys" must contain valid non-empty strings')
+    return sorted(key_values)
+
+
+def _enum_name(mapping, value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 'Unknown value'
+    return mapping.get(value, 'Unknown ({})'.format(value))
+
+
+def _format_redeem_result(bot_name, key, details):
+    if not isinstance(details, dict):
+        return 'Bot {}: [{}] Invalid ASF response.'.format(bot_name, key)
+    receipt = details.get('purchase_receipt_info')
+    if isinstance(receipt, dict):
+        line_items = receipt.get('line_items')
+        items = []
+        if isinstance(line_items, list):
+            for item in line_items:
+                if isinstance(item, dict):
+                    items.append('[{}, {}]'.format(
+                        item.get('packageid', 'unknown'),
+                        item.get('line_item_description', 'Unknown'),
+                    ))
+        return 'Bot {}: [{}] {}: {}/{}'.format(
+            bot_name, key, ' '.join(items),
+            _enum_name(Result, receipt.get('purchase_status')),
+            _enum_name(PurchaseResultDetail, receipt.get('result_detail')),
+        )
+    if 'Result' not in details and 'PurchaseResultDetail' not in details:
+        return 'Bot {}: [{}] Invalid ASF response.'.format(bot_name, key)
+    return 'Bot {}: [{}] {}/{}'.format(
+        bot_name, key,
+        _enum_name(Result, details.get('Result')),
+        _enum_name(PurchaseResultDetail, details.get('PurchaseResultDetail')),
+    )
 
 
 PurchaseResultDetail = {

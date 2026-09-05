@@ -1,27 +1,42 @@
 import logging
 DEFAULT_LOG_LEVEL = logging.DEBUG
 DEFAULT_FORMATTER = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+_HANDLER_MARKER = "_asfbot_console_handler"
+_log_level = DEFAULT_LOG_LEVEL
+logger = logging.getLogger("ASFBot")
+logger.setLevel(_log_level)
+
+
+def _ensure_console_handler(target_logger):
+    for handler in target_logger.handlers:
+        if getattr(handler, _HANDLER_MARKER, False):
+            handler.setLevel(_log_level)
+            handler.setFormatter(DEFAULT_FORMATTER)
+            return handler
+
+    handler = logging.StreamHandler()
+    setattr(handler, _HANDLER_MARKER, True)
+    handler.setLevel(_log_level)
+    handler.setFormatter(DEFAULT_FORMATTER)
+    target_logger.addHandler(handler)
+    return handler
 
 
 def set_logger(name):
     global logger
-    # create logger with 'spam_application'
     logger = logging.getLogger(name)
-    logger.setLevel(DEFAULT_LOG_LEVEL)
-    # create console handler with a higher log level
-    ch = logging.StreamHandler()
-    ch.setLevel(DEFAULT_LOG_LEVEL)
-    # create formatter and add it to the handlers
-    ch.setFormatter(DEFAULT_FORMATTER)
-    # add the handlers to the logger
-    logger.addHandler(ch)
+    logger.setLevel(_log_level)
+    _ensure_console_handler(logger)
     return logger
 
 
 def set_level(verbosity):
+    global _log_level
     numeric_level = get_numeric_log_level(verbosity)
-    for c_logger in logger.handlers:
-        c_logger.setLevel(numeric_level)
+    _log_level = numeric_level
+    logger.setLevel(numeric_level)
+    for handler in logger.handlers:
+        handler.setLevel(numeric_level)
 
 
 def get_numeric_log_level(verbosity):
