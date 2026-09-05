@@ -112,6 +112,27 @@ def test_readme_documents_current_operation_and_migration():
     assert "docker compose pull asfbot" in readme
 
 
+def test_registry_workflow_publishes_secure_multi_arch_images():
+    workflow = read(".github/workflows/docker.yml")
+
+    assert "ghcr.io/${{ github.repository_owner }}/asfbot" in workflow
+    assert "zieglar/asfbot" in workflow
+    assert "linux/amd64,linux/arm64" in workflow
+    assert "linux/arm/v7" not in workflow
+    assert "secrets.DOCKERHUB_USERNAME" in workflow
+    assert "secrets.DOCKERHUB_TOKEN" in workflow
+    assert "secrets.DOCKER_PASSWORD" not in workflow
+    assert "push: ${{ github.event_name != 'pull_request' }}" in workflow
+    assert "type=raw,value=latest,enable={{is_default_branch}}" in workflow
+    assert "type=semver,pattern={{version}}" in workflow
+    assert "cache-from: type=gha" in workflow
+    assert "cache-to: type=gha,mode=max" in workflow
+    assert "provenance: mode=max" in workflow
+    assert "sbom: true" in workflow
+    assert "@v2" not in workflow
+    assert "@v3" not in workflow
+
+
 def test_repeatable_container_gate_checks_compose_build_user_and_healthcheck():
     gate = read("scripts/verify-container.sh")
 
